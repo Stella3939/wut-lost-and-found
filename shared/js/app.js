@@ -209,12 +209,77 @@ function colorExtract(data, cb) {
   img.src = data;
 }
 
-// 根据分类与主色生成候选名称（演示版"语义识别"）
+// 根据分类与主色生成候选名称（本地模拟识别的"语义"部分）
 function suggestNames(category, color) {
   const dict = AI_NAMES[category] || AI_NAMES['其他类'];
   return dict.map(function (n) {
     return AI_COLOR_NAMES.indexOf(category) !== -1 ? color + n : n;
   });
+}
+
+// ---------- 真 AI 识别（智谱 GLM-4V-Flash，免费视觉大模型） ----------
+// 设计原则：API Key 只保存在用户自己的浏览器 localStorage 里，永不进入代码仓库；
+// 未配置 Key 时自动退回本地模拟识别，网站功能不受影响。
+const AI_KEY_STORAGE = 'wutlf_ai_key';
+
+function getAiKey() {
+  return storage.getItem(AI_KEY_STORAGE) || '';
+}
+function setAiKey(key) {
+  storage.setItem(AI_KEY_STORAGE, key);
+}
+function clearAiKey() {
+  storage.setItem(AI_KEY_STORAGE, '');
+}
+
+// 调用 GLM-4V-Flash 识别图片，返回 {name, color, desc}
+function callGLM4V(imageDataUrl, key, cb) {
+  const body = {
+    model: 'glm-4v-flash',
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'image_url', image_url: { url: imageDataUrl } },
+        { type: 'text', text: '你是失物招领平台的识别助手。请根据图片识别物品，只输出一个 JSON 对象（不要输出任何其他文字）：{"name":"物品中文名","color":"主要颜色","desc":"一句话外观描述"}' }
+      ]
+    }]
+  };
+  fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+    body: JSON.stringify(body)
+  }).then(function (r) { return r.json(); }).then(function (j) {
+    if (j && j.error) { cb(false, j.error.message || '调用失败'); return; }
+    const text = (j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+    let obj = null;
+    try {
+      obj = JSON.parse(text);
+    } catch (e) {
+      const mm = text.match(/\{[\s\S]*\}/);
+      if (mm) {
+        try { obj = JSON.parse(mm[0]); } catch (e2) { /* 解析失败走下方兜底 */ }
+      }
+    }
+    if (obj && obj.name) cb(true, obj);
+    else cb(false, '识别结果解析失败');
+  }).catch(function (err) {
+    cb(false, (err && err.message) ? err.message : '网络错误');
+  });
+}
+
+// 测试 Key 是否有效（纯文本请求，不消耗图片额度）
+function testAiKey(key, cb) {
+  fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+    body: JSON.stringify({
+      model: 'glm-4v-flash',
+      messages: [{ role: 'user', content: '只回复两个字：正常' }],
+      max_tokens: 10
+    })
+  }).then(function (r) { return r.json(); }).then(function (j) {
+    cb(!j.error);
+  }).catch(function () { cb(false); });
 }
 
 // ---------- 智能撮合（捡到/寻找双向匹配，演示版语义匹配引擎） ----------
@@ -1177,6 +1242,18 @@ function renderPublish(module) {
     + '<textarea class="form-textarea" id="f-desc" placeholder="描述物品的外观、特征，信息越多越容易找到～" maxlength="300"></textarea></div>'
     + '<div class="form-item"><label class="form-label">联系方式（选填）</label>'
     + '<input class="form-input" id="f-contact" type="text" placeholder="如：QQ / 手机号" maxlength="40"></div>'
+    + '<div class="ai-settings">'
+    + '<div class="ai-settings-row"><span>🔑 AI 识别：<b id="ai-status">' + (getAiKey() ? 'GLM-4V 真实识别' : '模拟识别') + '</b></span>'
+    + '<button class="ai-set-btn" id="ai-set-btn" type="button">设置</button></div>'
+    + '<div class="ai-settings-form" id="ai-set-form" style="display:none">'
+    + '<input id="ai-key-input" type="password" placeholder="粘贴智谱 API Key（免费，仅保存在本机浏览器）">'
+    + '<div class="ai-set-actions">'
+    + '<button class="ai-act" id="ai-save" type="button">保存</button>'
+    + '<button class="ai-act" id="ai-test" type="button">测试</button>'
+    + '<button class="ai-act danger" id="ai-clear" type="button">清除</button>'
+    + '</div>'
+    + '<div class="ai-note">Key 只存在你自己的浏览器里，不会进入网站代码。免费申请：open.bigmodel.cn</div>'
+    + '</div></div>'
     + '<div class="form-item"><label class="form-label">物品图片（选填，最多 3 张）</label>'
     + '<div class="upload-box" id="upload-box">'
     + '<div id="upload-hint">📷 点击上传图片</div>'
@@ -1232,37 +1309,92 @@ function renderPublish(module) {
     });
   }
 
-  // 模拟 AI 识别：提取图片主色 + 推荐名称（真实部署可替换为大模型视觉 API）
+  // AI 识别：已配置 Key 时用 GLM-4V 真识别，否则退回本地模拟识别
   function aiRecognize(data) {
     const panel = document.getElementById('ai-panel');
     panel.style.display = 'block';
     panel.innerHTML = '<div class="ai-title">🤖 AI 识别中…</div>';
+    const key = getAiKey();
+    if (key) {
+      callGLM4V(data, key, function (ok, result) {
+        if (ok && result.name) {
+          renderAiResult(panel, [{ name: result.color || '主色', hex: '#4A90D9' }], [result.name], '识别由 GLM-4V 视觉大模型提供');
+          // 真识别结果直接自动填入名称与描述
+          if (!document.getElementById('f-name').value.trim()) {
+            document.getElementById('f-name').value = result.name;
+          }
+          if (!document.getElementById('f-desc').value.trim()) {
+            document.getElementById('f-desc').value = '（AI 识别）' + (result.desc || result.name + '，主要颜色为' + (result.color || '未知') + '。');
+          }
+          return;
+        }
+        simulateRecognize(data, panel, '（AI 服务不可用，已使用本地模拟识别）');
+      });
+      return;
+    }
+    simulateRecognize(data, panel, '（未配置 Key，本地模拟识别 · 点上方「设置」可接入真 AI）');
+  }
+
+  // 本地模拟识别：真实提取主色 + 规则库推荐（兜底方案）
+  function simulateRecognize(data, panel, note) {
     setTimeout(function () {
       colorExtract(data, function (colors) {
         const category = document.getElementById('f-category').value || CAT(4);
         const names = suggestNames(category, colors[0].name);
-        panel.innerHTML = '<div class="ai-title">🤖 AI 识别结果</div>'
-          + '<div class="ai-colors">'
-          + colors.map(function (c) {
-              return '<span class="ai-color-chip"><i style="background:' + c.hex + '"></i>' + c.name + ' ' + c.pct + '%</span>';
-            }).join('')
-          + '</div>'
-          + '<div class="ai-names">'
-          + names.map(function (n) {
-              return '<span class="ai-name-chip" data-n="' + esc(n) + '">' + esc(n) + '</span>';
-            }).join('')
-          + '</div>'
-          + '<div class="ai-note">点击候选名称可自动填入；识别基于图片主色与规则库（演示用），真实部署可接入多模态大模型视觉 API。</div>';
-        panel.querySelectorAll('.ai-name-chip').forEach(function (chip) {
-          chip.addEventListener('click', function () {
-            document.getElementById('f-name').value = chip.dataset.n;
-            fillAiDesc(colors[0].name);
-          });
-        });
+        renderAiResult(panel, colors, names, note);
         fillAiDesc(colors[0].name);
       });
     }, 1200);
   }
+
+  function renderAiResult(panel, colors, names, note) {
+    panel.innerHTML = '<div class="ai-title">🤖 AI 识别结果</div>'
+      + '<div class="ai-colors">'
+      + colors.map(function (c) {
+          return '<span class="ai-color-chip"><i style="background:' + c.hex + '"></i>' + esc(c.name) + (c.pct ? ' ' + c.pct + '%' : '') + '</span>';
+        }).join('')
+      + '</div>'
+      + '<div class="ai-names">'
+      + names.map(function (n) {
+          return '<span class="ai-name-chip" data-n="' + esc(n) + '">' + esc(n) + '</span>';
+        }).join('')
+      + '</div>'
+      + '<div class="ai-note">' + esc(note) + '</div>';
+    panel.querySelectorAll('.ai-name-chip').forEach(function (chip) {
+      chip.addEventListener('click', function () {
+        document.getElementById('f-name').value = chip.dataset.n;
+      });
+    });
+  }
+
+  // AI 识别设置：Key 仅存本机浏览器
+  const aiSetBtn = document.getElementById('ai-set-btn');
+  if (aiSetBtn && aiSetBtn.addEventListener) {
+    aiSetBtn.addEventListener('click', function () {
+      const f = document.getElementById('ai-set-form');
+      f.style.display = f.style.display === 'none' ? 'block' : 'none';
+    });
+  }
+  document.getElementById('ai-key-input').value = getAiKey();
+  document.getElementById('ai-save').addEventListener('click', function () {
+    setAiKey(document.getElementById('ai-key-input').value.trim());
+    document.getElementById('ai-status').textContent = getAiKey() ? 'GLM-4V 真实识别' : '模拟识别';
+    showToast('已保存，仅存于本机');
+  });
+  document.getElementById('ai-test').addEventListener('click', function () {
+    const k = document.getElementById('ai-key-input').value.trim();
+    if (!k) { showToast('请先粘贴 Key'); return; }
+    showToast('正在测试…');
+    testAiKey(k, function (ok) {
+      showToast(ok ? 'Key 有效 ✅' : 'Key 无效或网络不通 ❌');
+    });
+  });
+  document.getElementById('ai-clear').addEventListener('click', function () {
+    clearAiKey();
+    document.getElementById('ai-key-input').value = '';
+    document.getElementById('ai-status').textContent = '模拟识别';
+    showToast('已清除');
+  });
 
   // 描述为空时自动填入 AI 辅助描述
   function fillAiDesc(color) {

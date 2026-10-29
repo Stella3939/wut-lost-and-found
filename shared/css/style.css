@@ -432,6 +432,33 @@ body {
 .ai-name-chip:active { background: var(--primary); color: #fff; }
 .ai-note { font-size: 11px; color: var(--muted); margin-top: 8px; }
 
+/* AI 识别设置（Key 仅存本机浏览器） */
+.ai-settings {
+  margin-top: 14px; background: var(--card); border: 1px solid var(--line);
+  border-radius: 12px; padding: 10px 12px;
+}
+.ai-settings-row {
+  display: flex; justify-content: space-between; align-items: center;
+  font-size: 13px;
+}
+.ai-settings-row b { color: var(--primary-dark); }
+.ai-set-btn {
+  border: 1px solid var(--primary); background: #fff; color: var(--primary-dark);
+  font-size: 12px; border-radius: 999px; padding: 3px 12px; cursor: pointer;
+}
+.ai-settings-form { margin-top: 8px; }
+.ai-settings-form input {
+  width: 100%; border: 1px solid var(--line); border-radius: 10px;
+  padding: 9px 12px; font-size: 13px; outline: none; font-family: inherit;
+}
+.ai-settings-form input:focus { border-color: var(--primary); }
+.ai-set-actions { display: flex; gap: 8px; margin-top: 8px; }
+.ai-act {
+  border: none; cursor: pointer; font-size: 12px; border-radius: 999px;
+  padding: 6px 14px; background: var(--primary); color: #fff;
+}
+.ai-act.danger { background: #F5E6E5; color: #C0504D; }
+
 /* ---------- 智能撮合 ---------- */
 .match-banner {
   display: block; margin: 10px 16px 0; text-align: center;
