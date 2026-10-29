@@ -18,8 +18,8 @@ const SITE_CONFIG = {
     mode: 'amap',
     center: [113.433, 35.411],  // 云台山景区（河南省修武县）
     zoom: 12,
-    amapKey: '',                // TODO: 填入高德 Web端(JS API) Key
-    amapJsCode: '',             // TODO: 填入高德安全密钥
+    amapKey: 'a07667a342c410d016fa953e5b42e69f', // 高德 Web端(JS API) Key
+    amapJsCode: '8cdefeb83cebe946dfa6325e28df4a50', // 高德安全密钥
     // 六个片区的热力多边形（近似范围，可继续微调）
     polygons: [
       { area: '游客中心', path: [[113.420, 35.400], [113.432, 35.400], [113.432, 35.410], [113.420, 35.410]] },

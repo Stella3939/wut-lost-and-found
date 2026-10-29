@@ -19,8 +19,8 @@ const SITE_CONFIG = {
     mode: 'amap',
     center: [114.346, 30.515],   // 默认视野：南湖/鉴湖/马房山片区
     zoom: 14,
-    amapKey: '',                 // TODO: 填入高德 Web端(JS API) Key
-    amapJsCode: '',              // TODO: 填入高德安全密钥
+    amapKey: 'a07667a342c410d016fa953e5b42e69f',  // 高德 Web端(JS API) Key
+    amapJsCode: '8cdefeb83cebe946dfa6325e28df4a50', // 高德安全密钥
     // 主片区四个校区的热力多边形（真实地理位置，可继续微调）
     polygons: [
       { area: '南湖', path: [[114.318, 30.492], [114.341, 30.492], [114.341, 30.508], [114.318, 30.508]] },
