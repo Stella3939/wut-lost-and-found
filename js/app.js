@@ -146,12 +146,279 @@ function bindPixelate(canvas, ctx) {
   canvas.addEventListener('pointercancel', function () { painting = false; });
 }
 
+// ---------- AI 拍照识别（演示版：真实提取图片主色 + 规则库推荐名称） ----------
+// 真实部署可替换为多模态大模型视觉 API（如 GLM-4V 等），交互流程不变
+const AI_NAMES = {
+  '电子数码类': ['充电宝', '耳机', '手机', '电子手表', 'U盘', '数据线'],
+  '证件卡品类': ['校园卡', '证件卡片', '银行卡'],
+  '学习用具类': ['笔记本', '课本', '钢笔', '文具盒'],
+  '生活用具类': ['水杯', '雨伞', '眼镜', '钥匙', '外套'],
+  '其他类': ['小物件', '包裹', '玩偶']
+};
+const AI_COLOR_NAMES = ['电子数码类', '生活用具类', '其他类']; // 名称适合带颜色前缀的分类
+
+const COLOR_PALETTE = [
+  ['黑', '#222222'], ['深灰', '#666666'], ['白', '#f2f2f2'], ['灰', '#9a9a9a'],
+  ['红', '#c0392b'], ['橙', '#e67e22'], ['黄', '#f1c40f'], ['绿', '#27ae60'],
+  ['蓝', '#2980b9'], ['紫', '#8e44ad'], ['棕', '#8b5a2b'], ['粉', '#e87ba4']
+];
+
+function nearestColor(r, g, b) {
+  let best = COLOR_PALETTE[0];
+  let bd = Infinity;
+  COLOR_PALETTE.forEach(function (p) {
+    const hex = p[1].replace('#', '');
+    const pr = parseInt(hex.slice(0, 2), 16);
+    const pg = parseInt(hex.slice(2, 4), 16);
+    const pb = parseInt(hex.slice(4, 6), 16);
+    const d = (r - pr) * (r - pr) + (g - pg) * (g - pg) + (b - pb) * (b - pb);
+    if (d < bd) { bd = d; best = p; }
+  });
+  return best;
+}
+
+// 提取图片主色：把图片缩到 24×24 再统计像素颜色
+function colorExtract(data, cb) {
+  const img = new Image();
+  img.onload = function () {
+    const c = document.createElement('canvas');
+    c.width = 24;
+    c.height = 24;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0, 24, 24);
+    let pixels;
+    try {
+      pixels = ctx.getImageData(0, 0, 24, 24).data;
+    } catch (e) {
+      cb([{ name: '未知', hex: '#999999', pct: 100 }]);
+      return;
+    }
+    const counts = {};
+    for (let i = 0; i < pixels.length; i += 4) {
+      if (pixels[i + 3] < 100) continue; // 跳过透明像素
+      const name = nearestColor(pixels[i], pixels[i + 1], pixels[i + 2])[0];
+      counts[name] = (counts[name] || 0) + 1;
+    }
+    const total = Object.keys(counts).reduce(function (s, k) { return s + counts[k]; }, 0) || 1;
+    const result = Object.keys(counts).map(function (k) {
+      const p = COLOR_PALETTE.find(x => x[0] === k);
+      return { name: k, hex: p[1], pct: Math.round(counts[k] / total * 100) };
+    }).sort(function (a, b) { return b.pct - a.pct; }).slice(0, 2);
+    cb(result);
+  };
+  img.src = data;
+}
+
+// 根据分类与主色生成候选名称（演示版"语义识别"）
+function suggestNames(category, color) {
+  const dict = AI_NAMES[category] || AI_NAMES['其他类'];
+  return dict.map(function (n) {
+    return AI_COLOR_NAMES.indexOf(category) !== -1 ? color + n : n;
+  });
+}
+
+// ---------- 智能撮合（捡到/寻找双向匹配，演示版语义匹配引擎） ----------
+let lastPublished = null; // 最近发布的信息（用于列表页撮合提示）
+
+// 同义词组：双方名称命中同一组即视为同一类物品
+const SYNONYMS = {
+  '充电宝': ['充电宝', '移动电源', '充电器'],
+  '耳机': ['耳机', '耳麦'],
+  '水杯': ['水杯', '杯子', '保温杯', '水瓶'],
+  '雨伞': ['雨伞', '伞'],
+  '校园卡': ['校园卡', '学生卡', '一卡通', '饭卡'],
+  '手机': ['手机', '电话'],
+  '钥匙': ['钥匙', '钥匙串'],
+  '证件': ['学生证', '身份证', '证件']
+};
+
+// 匹配度打分：品类 + 名称/同义词 + 区域 + 时间窗
+function matchScore(a, b) {
+  let s = 0;
+  if (a.category === b.category) s += 40;
+  if (a.name === b.name) s += 30;
+  else {
+    const groups = Object.keys(SYNONYMS).map(function (k) { return SYNONYMS[k]; });
+    for (let i = 0; i < groups.length; i++) {
+      const hitA = groups[i].some(function (w) { return a.name.indexOf(w) !== -1; });
+      const hitB = groups[i].some(function (w) { return b.name.indexOf(w) !== -1; });
+      if (hitA && hitB) { s += 20; break; }
+    }
+  }
+  if (a.campus === b.campus) s += 15;
+  const dt = Math.abs(new Date(a.time) - new Date(b.time)) / 86400000;
+  if (dt <= 1) s += 15;
+  else if (dt <= 7) s += 10;
+  return Math.min(s, 100);
+}
+
+function getMatches(item, limit) {
+  const others = getItems().filter(function (it) {
+    return it.module !== item.module && it.status === 'waiting';
+  });
+  return others.map(function (it) { return { item: it, score: matchScore(item, it) }; })
+    .filter(function (m) { return m.score >= 60; })
+    .sort(function (a, b) { return b.score - a.score; })
+    .slice(0, limit || 2);
+}
+
+function matchSectionHtml(it) {
+  if (it.status !== 'waiting') return '';
+  const matches = getMatches(it, 2);
+  if (!matches.length) return '';
+  const other = it.module === 'found' ? '寻找' : '捡到';
+  return '<div class="match-section">'
+    + '<div class="match-title">🤖 智能撮合 · 可能匹配的' + other + '信息</div>'
+    + matches.map(function (m) {
+        return '<a class="match-card" href="#/detail/' + m.item.id + '">'
+          + '<div class="match-head"><span class="match-name">' + esc(m.item.name) + '</span>'
+          + '<span class="match-score">' + m.score + '%</span></div>'
+          + '<div class="match-meta">' + esc(m.item.campus) + ' · ' + fmtTime(m.item.time) + '</div>'
+          + '<div class="match-bar"><i style="width:' + m.score + '%"></i></div>'
+          + '</a>';
+      }).join('')
+    + '</div>';
+}
+
+function matchBannerHtml(module) {
+  if (!lastPublished || lastPublished.module !== module) return '';
+  const matches = getMatches(lastPublished, 3);
+  if (!matches.length) return '';
+  return '<a class="match-banner" href="#/detail/' + lastPublished.id + '">🔔 智能撮合：你刚发布的信息检测到 '
+    + matches.length + ' 条可能匹配的信息（最高 ' + matches[0].score + '% 匹配度）→</a>';
+}
+
+// ---------- 数据看板（B 端管理方视角） ----------
+const VIZ_HOURS = ['8-10点', '10-12点', '12-14点', '14-16点', '16-18点', '18-20点', '20-22点', '22-24点'];
+
+function hourCountsOf(items) {
+  return VIZ_HOURS.map(function (label, i) {
+    const lo = 8 + i * 2;
+    const hi = lo + 2;
+    return {
+      label: label,
+      n: items.filter(function (it) {
+        const h = new Date(it.time).getHours();
+        return h >= lo && h < hi;
+      }).length
+    };
+  });
+}
+
+function renderDashboard() {
+  const items = getItems();
+  const waiting = items.filter(it => it.status === 'waiting');
+  const foundN = items.length - waiting.length;
+  const rate = items.length ? Math.round(foundN / items.length * 100) : 0;
+
+  // 各区域等待中数量（热力）
+  const areaCounts = SITE_CONFIG.areas.map(function (a) {
+    return { area: a, n: waiting.filter(function (it) { return it.campus === a; }).length };
+  });
+  const maxN = Math.max(1, Math.max.apply(null, areaCounts.map(function (x) { return x.n; })));
+
+  // 品类分布
+  const catCounts = SITE_CONFIG.categories.map(function (c, i) {
+    return { cat: c, i: i, n: items.filter(function (it) { return it.category === c; }).length };
+  });
+  const maxCat = Math.max(1, Math.max.apply(null, catCounts.map(function (x) { return x.n; })));
+
+  // 时段分布
+  const hourCounts = hourCountsOf(items);
+  const maxH = Math.max(1, Math.max.apply(null, hourCounts.map(function (x) { return x.n; })));
+
+  const heatStep = function (n) {
+    if (n === 0) return 'hs0';
+    return 'hs' + Math.min(5, Math.max(1, Math.ceil(n / maxN * 5)));
+  };
+
+  app.innerHTML =
+    '<div class="topbar"><a class="back" href="#/">‹</a><h1>数据看板</h1></div>'
+    + '<div class="dash-body">'
+    + '<div class="dash-note">面向场所管理方的增值服务原型 · 数据来自本机演示数据</div>'
+    + '<div class="kpi-row">'
+    + '<div class="kpi-tile"><div class="kpi-num">' + items.length + '</div><div class="kpi-label">信息总数</div></div>'
+    + '<div class="kpi-tile"><div class="kpi-num kpi-good">' + rate + '%</div><div class="kpi-label">找回率</div></div>'
+    + '<div class="kpi-tile"><div class="kpi-num kpi-warn">' + waiting.length + '</div><div class="kpi-label">等待认领</div></div>'
+    + '</div>'
+    + '<div class="dash-card"><div class="dash-title">🔥 各' + SITE_CONFIG.areaLabel + '失物密度（等待中）</div>'
+    + '<div class="heat-grid">'
+    + areaCounts.map(function (x) {
+        return '<div class="heat-tile ' + heatStep(x.n) + '"><div class="heat-name">' + esc(x.area) + '</div>'
+          + '<div class="heat-count">' + x.n + ' 件</div></div>';
+      }).join('')
+    + '</div></div>'
+    + '<div class="dash-card"><div class="dash-title">📦 品类分布</div>'
+    + catCounts.map(function (x) {
+        return '<div class="bar-row"><div class="bar-label">' + esc(x.cat) + '</div>'
+          + '<div class="bar-track"><i class="bar-fill viz-c' + (x.i + 1) + '" style="width:' + Math.round(x.n / maxCat * 100) + '%"></i></div>'
+          + '<div class="bar-val">' + x.n + ' 件</div></div>';
+      }).join('')
+    + '</div>'
+    + '<div class="dash-card"><div class="dash-title">🕐 丢失时段分布</div>'
+    + hourCounts.map(function (x) {
+        return '<div class="bar-row"><div class="bar-label">' + x.label + '</div>'
+          + '<div class="bar-track"><i class="bar-fill viz-hour" style="width:' + Math.round(x.n / maxH * 100) + '%"></i></div>'
+          + '<div class="bar-val">' + x.n + ' 件</div></div>';
+      }).join('')
+    + '</div>'
+    + '<div class="dash-card"><div class="dash-title">💡 防丢建议（规则引擎生成）</div>'
+    + genAdvice(items).map(function (a) { return '<div class="advice-card">' + esc(a) + '</div>'; }).join('')
+    + '</div>'
+    + '<div class="dash-card"><div class="dash-title">📋 数据明细</div>'
+    + '<table class="dash-table"><tr><th>' + esc(SITE_CONFIG.areaLabel) + '</th><th>等待</th><th>已找到</th><th>小计</th></tr>'
+    + areaCounts.map(function (x) {
+        const f = items.filter(function (it) { return it.campus === x.area && it.status === 'found'; }).length;
+        return '<tr><td>' + esc(x.area) + '</td><td>' + x.n + '</td><td>' + f + '</td><td>' + (x.n + f) + '</td></tr>';
+      }).join('')
+    + '</table></div>'
+    + '</div>';
+}
+
+// 规则引擎：从数据自动生成防丢建议（演示版专家系统）
+function genAdvice(items) {
+  const waiting = items.filter(function (it) { return it.status === 'waiting'; });
+  const adv = [];
+  // 规则 1：区域 × 品类积压 TOP
+  const combos = {};
+  waiting.forEach(function (it) {
+    const k = it.campus + '|' + it.category;
+    combos[k] = (combos[k] || 0) + 1;
+  });
+  const top = Object.keys(combos).map(function (k) {
+    const p = k.split('|');
+    return { area: p[0], cat: p[1], n: combos[k] };
+  }).filter(function (x) { return x.n >= 2; })
+    .sort(function (a, b) { return b.n - a.n; })
+    .slice(0, 3);
+  top.forEach(function (x) {
+    adv.push('「' + x.area + '」的「' + x.cat + '」积压 ' + x.n + ' 件，建议在该区域增设防丢提醒标识与高峰广播，并检查是否缺少置物/挂钩设施。');
+  });
+  // 规则 2：丢失高峰时段
+  let best = null;
+  hourCountsOf(items).forEach(function (x) {
+    if (!best || x.n > best.n) best = x;
+  });
+  if (best && best.n >= 2) {
+    adv.push('每日 ' + best.label + ' 为丢失高发时段（' + best.n + ' 件），建议该时段加强巡场与语音提醒。');
+  }
+  // 规则 3：找回率偏低时建议优化认领流程
+  if (items.length >= 5) {
+    const foundN = items.length - waiting.length;
+    if (foundN / items.length < 0.5) {
+      adv.push('整体找回率不足一半，建议简化认领流程（线上验证、邮寄认领、多时段值班）。');
+    }
+  }
+  return adv.length ? adv : ['暂无显著热点，当前防丢形势良好。'];
+}
+
 // ---------- 路由 ----------
 function render() {
   const parts = (location.hash || '#/').slice(1).split('/').filter(Boolean);
   if (parts[0] === 'found' || parts[0] === 'lost') renderList(parts[0]);
   else if (parts[0] === 'detail') renderDetail(Number(parts[1]));
   else if (parts[0] === 'publish') renderPublish(parts[1] || 'found');
+  else if (parts[0] === 'dashboard') renderDashboard();
   else renderHome();
   updateFooter();
   window.scrollTo(0, 0);
@@ -171,8 +438,8 @@ function renderHome() {
 
   app.innerHTML =
     '<div class="home-head">'
-    + '<div class="home-title">🎓 武汉理工大学失物招领</div>'
-    + '<div class="home-sub">让每一件失物都能找到回家的路</div>'
+    + '<div class="home-title">🎓 ' + esc(SITE_CONFIG.siteName) + '</div>'
+    + '<div class="home-sub">' + esc(SITE_CONFIG.slogan) + '</div>'
     + '</div>'
     + '<div class="entry-grid">'
     + '<a class="entry-card" href="#/found">'
@@ -183,7 +450,8 @@ function renderHome() {
     + '<div class="entry-desc">我的物品丢了，寻找它的下落</div></a>'
     + '</div>'
     + '<div class="section-title">📦 最新捡到</div>' + cards(latest('found'))
-    + '<div class="section-title">🔍 最新寻找</div>' + cards(latest('lost'));
+    + '<div class="section-title">🔍 最新寻找</div>' + cards(latest('lost'))
+    + '<a class="dash-entry" href="#/dashboard">📊 数据看板 · 管理方视角 →</a>';
 }
 
 // ---------- 列表页 ----------
@@ -207,8 +475,9 @@ function renderList(module) {
     + '</div>'
     + '<div class="tabs">'
     + '<div class="tab' + (listState.dim === 'category' ? ' active' : '') + '" data-dim="category">按分类</div>'
-    + '<div class="tab' + (listState.dim === 'campus' ? ' active' : '') + '" data-dim="campus">按校区</div>'
+    + '<div class="tab' + (listState.dim === 'campus' ? ' active' : '') + '" data-dim="campus">按' + SITE_CONFIG.areaLabel + '</div>'
     + '</div>'
+    + matchBannerHtml(module)
     + '<div id="chips"></div>'
     + '<div id="list-items"></div>'
     + '<a class="fab" href="#/publish/' + module + '" title="发布信息">＋</a>';
@@ -305,7 +574,7 @@ function renderDetail(id) {
     + '<div class="detail-name">' + esc(it.name) + statusBadge(it.status) + '</div>'
     + '<div class="meta-card">'
     + '<div class="meta-row"><span class="meta-label">分类</span><span class="meta-value">' + esc(it.category) + '</span></div>'
-    + '<div class="meta-row"><span class="meta-label">校区</span><span class="meta-value">' + esc(it.campus) + '</span></div>'
+    + '<div class="meta-row"><span class="meta-label">' + esc(SITE_CONFIG.areaLabel) + '</span><span class="meta-value">' + esc(it.campus) + '</span></div>'
     + '<div class="meta-row"><span class="meta-label">具体地点</span><span class="meta-value">' + esc(it.location || '未填写') + '</span></div>'
     + '<div class="meta-row"><span class="meta-label">发布时间</span><span class="meta-value">' + fmtTime(it.time) + '</span></div>'
     + (it.contact
@@ -320,6 +589,7 @@ function renderDetail(id) {
       ? '请认领人描述物品特征（颜色、内部物品、特殊标记等）核对身份后再交接，防止冒领。'
       : '有人联系归还时，请先核对对方描述的物品特征，建议校内当面交接。')
     + '</div>'
+    + matchSectionHtml(it)
     + (it.status === 'waiting'
       ? '<button class="btn btn-green mark-btn" id="mark-btn">✅ 标记为已找到</button>'
       : '<div class="found-note">🎉 这件物品已经找到家了！</div>')
@@ -416,8 +686,8 @@ function renderPublish(module) {
     + '<input class="form-input" id="f-name" type="text" placeholder="如：校园卡、黑色充电宝…" maxlength="30"></div>'
     + '<div class="form-item"><label class="form-label">物品分类<span class="req"> *</span></label>'
     + options(CATEGORIES, 'f-category', '请选择分类') + '</div>'
-    + '<div class="form-item"><label class="form-label">所在校区<span class="req"> *</span></label>'
-    + options(CAMPUSES, 'f-campus', '请选择校区') + '</div>'
+    + '<div class="form-item"><label class="form-label">所在' + SITE_CONFIG.areaLabel + '<span class="req"> *</span></label>'
+    + options(CAMPUSES, 'f-campus', '请选择' + SITE_CONFIG.areaLabel) + '</div>'
     + '<div class="form-item"><label class="form-label">具体地点</label>'
     + '<input class="form-input" id="f-location" type="text" placeholder="如：图书馆二楼、操场看台…" maxlength="40"></div>'
     + '<div class="form-item"><label class="form-label">物品描述</label>'
@@ -430,6 +700,7 @@ function renderPublish(module) {
     + '<div class="thumbs-row" id="thumbs-row"></div>'
     + '</div>'
     + '<input type="file" id="f-image" accept="image/*" multiple style="display:none">'
+    + '<div class="ai-panel" id="ai-panel" style="display:none"></div>'
     + '<div class="privacy-hint" id="privacy-hint" style="display:none">⚠️ 证件类物品涉及个人隐私，请遮挡证件号、姓名等敏感信息后再上传照片</div>'
     + '<div class="privacy-panel" id="privacy-panel" style="display:none">'
     + '<div class="privacy-title">🔒 隐私保护 · 图片打码</div>'
@@ -473,8 +744,48 @@ function renderPublish(module) {
       imageList.push(data);
       renderThumbs();
       updatePrivacyUI();
+      aiRecognize(data);
       processFiles(list);
     });
+  }
+
+  // 模拟 AI 识别：提取图片主色 + 推荐名称（真实部署可替换为大模型视觉 API）
+  function aiRecognize(data) {
+    const panel = document.getElementById('ai-panel');
+    panel.style.display = 'block';
+    panel.innerHTML = '<div class="ai-title">🤖 AI 识别中…</div>';
+    setTimeout(function () {
+      colorExtract(data, function (colors) {
+        const category = document.getElementById('f-category').value || CAT(4);
+        const names = suggestNames(category, colors[0].name);
+        panel.innerHTML = '<div class="ai-title">🤖 AI 识别结果</div>'
+          + '<div class="ai-colors">'
+          + colors.map(function (c) {
+              return '<span class="ai-color-chip"><i style="background:' + c.hex + '"></i>' + c.name + ' ' + c.pct + '%</span>';
+            }).join('')
+          + '</div>'
+          + '<div class="ai-names">'
+          + names.map(function (n) {
+              return '<span class="ai-name-chip" data-n="' + esc(n) + '">' + esc(n) + '</span>';
+            }).join('')
+          + '</div>'
+          + '<div class="ai-note">点击候选名称可自动填入；识别基于图片主色与规则库（演示用），真实部署可接入多模态大模型视觉 API。</div>';
+        panel.querySelectorAll('.ai-name-chip').forEach(function (chip) {
+          chip.addEventListener('click', function () {
+            document.getElementById('f-name').value = chip.dataset.n;
+            fillAiDesc(colors[0].name);
+          });
+        });
+        fillAiDesc(colors[0].name);
+      });
+    }, 1200);
+  }
+
+  // 描述为空时自动填入 AI 辅助描述
+  function fillAiDesc(color) {
+    const d = document.getElementById('f-desc');
+    if (d.value.trim()) return;
+    d.value = '（AI 辅助描述）主色为' + color + '，外观基本完好，有轻微使用痕迹，具体特征请认领人核对。';
   }
 
   // 渲染已选图片缩略图：可删除；打码面板打开时可点击切换打码对象
@@ -583,7 +894,7 @@ function renderPublish(module) {
     // 面板显示时，把当前画布的打码结果存回列表
     if (privacyPanel.style.display !== 'none') commitCanvas();
 
-    addItem({
+    lastPublished = addItem({
       module: module,
       name: name,
       category: category,
@@ -607,5 +918,6 @@ function renderPublish(module) {
 
 // ---------- 启动 ----------
 initStore();
+document.title = SITE_CONFIG.siteName;
 render();
 window.addEventListener('hashchange', render);

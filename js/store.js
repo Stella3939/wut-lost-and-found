@@ -18,13 +18,12 @@ const storage = (function () {
   }
 })();
 
-// 首次打开时写入预设示例数据
+// 首次打开（或 config.js 中 seedVersion 变化后）写入预设示例数据
 function initStore() {
-  if (storage.getItem(ITEMS_KEY) === null) {
+  if (storage.getItem('wutlf_seed_version') !== String(SITE_CONFIG.seedVersion)) {
     storage.setItem(ITEMS_KEY, JSON.stringify(SEED_ITEMS));
-  }
-  if (storage.getItem(COMMENTS_KEY) === null) {
     storage.setItem(COMMENTS_KEY, JSON.stringify(SEED_COMMENTS));
+    storage.setItem('wutlf_seed_version', String(SITE_CONFIG.seedVersion));
   }
 }
 
