@@ -371,6 +371,8 @@ function renderAmap(box, areaCounts, heatStep, m, mapPanel) {
   window._AMapSecurityConfig = { securityJsCode: m.amapJsCode };
   if (window.AMap) { buildAmap(); return; }
   const s = document.createElement('script');
+  // 强制浏览器向高德发送来源域名（白名单校验需要；微信内置浏览器等环境可能默认剥掉）
+  s.setAttribute('referrerpolicy', 'origin');
   s.src = 'https://webapi.amap.com/maps?v=2.0&key=' + m.amapKey;
   s.onload = buildAmap;
   s.onerror = function () {
