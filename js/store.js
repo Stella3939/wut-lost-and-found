@@ -54,6 +54,15 @@ function updateItem(id, patch) {
   }
   return it;
 }
+// 下架（删除）一条信息，同时清掉它的评论
+function removeItem(id) {
+  saveItems(getItems().filter(it => it.id !== id));
+  const all = JSON.parse(storage.getItem(COMMENTS_KEY) || '{}');
+  if (all[id]) {
+    delete all[id];
+    storage.setItem(COMMENTS_KEY, JSON.stringify(all));
+  }
+}
 
 // ---------- 评论 ----------
 function getComments(itemId) {

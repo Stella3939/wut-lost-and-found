@@ -305,49 +305,122 @@ function hourCountsOf(items) {
   });
 }
 
-function renderDashboard() {
+// 热力色阶（0 件 → 最多件，蓝阶由浅到深）
+function heatStepOf(maxN) {
+  return function (n) {
+    if (n === 0) return 'hs0';
+    return 'hs' + Math.min(5, Math.max(1, Math.ceil(n / maxN * 5)));
+  };
+}
+
+// 地图图例（色阶条）
+function mapLegendHtml() {
+  return '<div class="map-legend"><span>0 件</span>'
+    + ['#EEF2F6', '#86b6ef', '#5598e7', '#2a78d6', '#1c5cab', '#104281'].map(function (c) {
+        return '<i style="background:' + c + '"></i>';
+      }).join('')
+    + '<span>最多</span></div>';
+}
+
+// 平面 SVG 热力地图（"地图即配置"：多边形路径来自 config.js）
+function flatMapSvg(areaCounts, heatStep, m) {
+  const vb = (m.viewBox || '0 0 600 420').split(' ');
+  const w = Number(vb[2]);
+  const h = Number(vb[3]);
+  return '<svg class="map-svg" viewBox="' + m.viewBox + '" preserveAspectRatio="xMidYMid meet">'
+    + '<rect class="map-bg" x="0" y="0" width="' + w + '" height="' + h + '" rx="14"/>'
+    + '<path class="map-road" d="M0,110 C150,100 450,120 600,105"/>'
+    + '<path class="map-road" d="M0,310 C160,320 420,300 600,315"/>'
+    + '<path class="map-road" d="M300,0 C310,140 290,280 305,420"/>'
+    + areaCounts.map(function (x) {
+        const p = (m.paths || {})[x.area];
+        if (!p) return '';
+        const cls = heatStep(x.n);
+        const ink = (cls === 'hs0' || cls === 'hs1' || cls === 'hs2') ? '#2B3A4A' : '#FFFFFF';
+        return '<path class="map-area ' + cls + '" data-area="' + esc(x.area) + '" d="' + p.d + '"/>'
+          + '<text class="map-label" x="' + p.label[0] + '" y="' + p.label[1] + '" fill="' + ink + '">' + esc(x.area) + '</text>'
+          + '<text class="map-count" x="' + p.label[0] + '" y="' + (p.label[1] + 16) + '" fill="' + ink + '">' + x.n + ' 件</text>';
+      }).join('')
+    + '</svg>';
+}
+
+// 立体楼层堆叠（2.5D，适合商场/写字楼；真实部署可升级 Three.js 3D 模型）
+function stackHtml(areaCounts, heatStep, m) {
+  const gap = m.floorGap || 36;
+  return '<div class="stack-scene"><div class="stack-stage">'
+    + areaCounts.map(function (x, i) {
+        const cls = heatStep(x.n);
+        const ink = (cls === 'hs0' || cls === 'hs1' || cls === 'hs2') ? '#2B3A4A' : '#FFFFFF';
+        return '<div class="stack-floor ' + cls + '" data-area="' + esc(x.area) + '" style="--z:' + (i * gap) + 'px;color:' + ink + '">'
+          + '<div class="stack-name">' + esc(x.area) + '</div>'
+          + '<div class="stack-count">' + x.n + ' 件</div>'
+          + '</div>';
+      }).join('')
+    + '</div><div class="stack-hint">各层热力一目了然 · 点击楼层查看详情</div></div>';
+}
+
+// 从管理端地图跳转到对应区域的列表
+function goAreaList(area) {
+  listState.module = 'found';
+  listState.dim = 'campus';
+  listState.filter = area;
+  listState.keyword = '';
+  listState.fuzzy = false;
+  location.hash = '#/found';
+}
+
+// 管理端：数据看板 + 热力地图 + 信息管理（演示模式，真实部署需 RBAC 权限体系）
+function renderAdmin() {
   const items = getItems();
-  const waiting = items.filter(it => it.status === 'waiting');
+  const waiting = items.filter(function (it) { return it.status === 'waiting'; });
   const foundN = items.length - waiting.length;
   const rate = items.length ? Math.round(foundN / items.length * 100) : 0;
 
-  // 各区域等待中数量（热力）
   const areaCounts = SITE_CONFIG.areas.map(function (a) {
-    return { area: a, n: waiting.filter(function (it) { return it.campus === a; }).length };
+    return {
+      area: a,
+      n: waiting.filter(function (it) { return it.campus === a; }).length,
+      f: items.filter(function (it) { return it.campus === a && it.status === 'found'; }).length
+    };
   });
   const maxN = Math.max(1, Math.max.apply(null, areaCounts.map(function (x) { return x.n; })));
+  const heatStep = heatStepOf(maxN);
 
-  // 品类分布
   const catCounts = SITE_CONFIG.categories.map(function (c, i) {
     return { cat: c, i: i, n: items.filter(function (it) { return it.category === c; }).length };
   });
   const maxCat = Math.max(1, Math.max.apply(null, catCounts.map(function (x) { return x.n; })));
 
-  // 时段分布
   const hourCounts = hourCountsOf(items);
   const maxH = Math.max(1, Math.max.apply(null, hourCounts.map(function (x) { return x.n; })));
 
-  const heatStep = function (n) {
-    if (n === 0) return 'hs0';
-    return 'hs' + Math.min(5, Math.max(1, Math.ceil(n / maxN * 5)));
-  };
+  // 滞留超 10 天的等待中物品
+  const stale = waiting.filter(function (it) {
+    return (Date.now() - new Date(it.time)) / 86400000 > 10;
+  }).sort(byTimeDesc);
+  const recentWaiting = waiting.slice().sort(byTimeDesc).slice(0, 8);
+  const recentFound = items.filter(function (it) { return it.status === 'found'; }).sort(byTimeDesc).slice(0, 5);
+
+  const m = SITE_CONFIG.map || {};
+  const defaultView = (m.mode === 'stack') ? 'stack' : 'flat';
 
   app.innerHTML =
-    '<div class="topbar"><a class="back" href="#/">‹</a><h1>数据看板</h1></div>'
+    '<div class="topbar"><a class="back" href="#/">‹</a><h1>管理端 · ' + esc(SITE_CONFIG.orgName) + '</h1></div>'
     + '<div class="dash-body">'
-    + '<div class="dash-note">面向场所管理方的增值服务原型 · 数据来自本机演示数据</div>'
+    + '<div class="admin-demo-note">演示模式：真实部署需接入账号权限体系（RBAC），管理端仅对授权人员开放</div>'
     + '<div class="kpi-row">'
     + '<div class="kpi-tile"><div class="kpi-num">' + items.length + '</div><div class="kpi-label">信息总数</div></div>'
     + '<div class="kpi-tile"><div class="kpi-num kpi-good">' + rate + '%</div><div class="kpi-label">找回率</div></div>'
     + '<div class="kpi-tile"><div class="kpi-num kpi-warn">' + waiting.length + '</div><div class="kpi-label">等待认领</div></div>'
     + '</div>'
-    + '<div class="dash-card"><div class="dash-title">🔥 各' + SITE_CONFIG.areaLabel + '失物密度（等待中）</div>'
-    + '<div class="heat-grid">'
-    + areaCounts.map(function (x) {
-        return '<div class="heat-tile ' + heatStep(x.n) + '"><div class="heat-name">' + esc(x.area) + '</div>'
-          + '<div class="heat-count">' + x.n + ' 件</div></div>';
-      }).join('')
-    + '</div></div>'
+    + '<div class="dash-card"><div class="dash-title">🗺️ 失物热力地图</div>'
+    + mapLegendHtml()
+    + '<div id="map-area"></div>'
+    + '<div id="map-panel"></div>'
+    + '<button class="map-toggle" id="map-toggle" type="button">'
+    + (defaultView === 'flat' ? '🧊 预览立体楼层模式' : '🖼️ 切换平面色块视图')
+    + '</button>'
+    + '</div>'
     + '<div class="dash-card"><div class="dash-title">📦 品类分布</div>'
     + catCounts.map(function (x) {
         return '<div class="bar-row"><div class="bar-label">' + esc(x.cat) + '</div>'
@@ -365,14 +438,106 @@ function renderDashboard() {
     + '<div class="dash-card"><div class="dash-title">💡 防丢建议（规则引擎生成）</div>'
     + genAdvice(items).map(function (a) { return '<div class="advice-card">' + esc(a) + '</div>'; }).join('')
     + '</div>'
+    + '<div class="dash-card"><div class="dash-title">🗂️ 待认领信息管理</div>'
+    + (recentWaiting.length ? recentWaiting.map(function (it) {
+        return '<div class="adm-row">'
+          + '<div class="adm-main"><div class="adm-name">' + esc(it.name)
+          + '<span class="adm-badge ' + it.module + '">' + (it.module === 'found' ? '捡到' : '寻找') + '</span></div>'
+          + '<div class="adm-meta">' + esc(it.campus) + ' · ' + esc(it.location || '地点未填写') + ' · ' + fmtTime(it.time) + '</div></div>'
+          + '<div class="adm-actions">'
+          + '<button class="act-btn act-found" data-id="' + it.id + '" type="button">✅ 已找到</button>'
+          + '<button class="act-btn act-del" data-id="' + it.id + '" type="button">🗑 下架</button>'
+          + '</div></div>';
+      }).join('') : emptyHtml('暂无待认领信息'))
+    + '</div>'
+    + '<div class="dash-card"><div class="dash-title">📜 滞留预警与招领公告'
+    + (stale.length ? '（' + stale.length + ' 件滞留超 10 天）' : '') + '</div>'
+    + (stale.length ? stale.map(function (it) {
+        const days = Math.floor((Date.now() - new Date(it.time)) / 86400000);
+        return '<div class="stale-row">' + esc(it.name) + ' · ' + esc(it.campus)
+          + ' <span class="stale-tag">滞留 ' + days + ' 天</span></div>';
+      }).join('') : '<div class="law-note">当前无滞留物品。</div>')
+    + '<div class="law-note">📖 依据《民法典》第318条：遗失物自发布招领公告之日起一年内无人认领的，归国家所有。本平台对滞留超 30 天物品自动生成招领公告（演示）。</div>'
+    + '</div>'
+    + '<div class="dash-card"><div class="dash-title">✅ 已闭环（找到家）</div>'
+    + (recentFound.length ? recentFound.map(function (it) {
+        return '<div class="closed-row">🏠 ' + esc(it.name) + ' · ' + esc(it.campus) + ' · ' + fmtTime(it.time) + '</div>';
+      }).join('') : emptyHtml('暂无已找到记录'))
+    + '</div>'
     + '<div class="dash-card"><div class="dash-title">📋 数据明细</div>'
     + '<table class="dash-table"><tr><th>' + esc(SITE_CONFIG.areaLabel) + '</th><th>等待</th><th>已找到</th><th>小计</th></tr>'
     + areaCounts.map(function (x) {
-        const f = items.filter(function (it) { return it.campus === x.area && it.status === 'found'; }).length;
-        return '<tr><td>' + esc(x.area) + '</td><td>' + x.n + '</td><td>' + f + '</td><td>' + (x.n + f) + '</td></tr>';
+        return '<tr><td>' + esc(x.area) + '</td><td>' + x.n + '</td><td>' + x.f + '</td><td>' + (x.n + x.f) + '</td></tr>';
       }).join('')
     + '</table></div>'
     + '</div>';
+
+  // ---- 地图渲染与交互 ----
+  let mapView = defaultView;
+  const mapArea = document.getElementById('map-area');
+  const mapPanel = document.getElementById('map-panel');
+
+  function drawMap() {
+    mapPanel.innerHTML = '';
+    if (mapView === 'stack') {
+      mapArea.innerHTML = stackHtml(areaCounts, heatStep, m);
+    } else if (m.mode === 'flat' && Object.keys(m.paths || {}).length) {
+      mapArea.innerHTML = flatMapSvg(areaCounts, heatStep, m);
+    } else {
+      // 无平面多边形配置时回落到色块网格
+      mapArea.innerHTML = '<div class="heat-grid">'
+        + areaCounts.map(function (x) {
+            return '<div class="heat-tile ' + heatStep(x.n) + '"><div class="heat-name">' + esc(x.area) + '</div>'
+              + '<div class="heat-count">' + x.n + ' 件</div></div>';
+          }).join('')
+        + '</div>';
+    }
+    mapArea.querySelectorAll('[data-area]').forEach(function (node) {
+      node.addEventListener('click', function () {
+        const area = node.dataset.area;
+        const x = areaCounts.find(function (t) { return t.area === area; });
+        mapPanel.innerHTML = '<div class="map-panel">📍 <b>' + esc(area) + '</b>：等待 '
+          + x.n + ' 件 · 已找到 ' + x.f + ' 件'
+          + ' <button class="map-go" type="button" data-area="' + esc(area) + '">在「捡到东西」中查看 →</button></div>';
+        mapPanel.querySelector('.map-go').addEventListener('click', function () {
+          goAreaList(area);
+        });
+      });
+    });
+  }
+
+  document.getElementById('map-toggle').addEventListener('click', function () {
+    mapView = mapView === 'stack' ? 'flat' : 'stack';
+    document.getElementById('map-toggle').textContent = mapView === 'stack' ? '🖼️ 切换平面色块视图' : '🧊 预览立体楼层模式';
+    drawMap();
+  });
+
+  drawMap();
+
+  // ---- 信息管理操作 ----
+  app.querySelectorAll('.act-found').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      updateItem(Number(btn.dataset.id), { status: 'found' });
+      showToast('已标记为找到 🎉');
+      render();
+    });
+  });
+  app.querySelectorAll('.act-del').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      if (btn.dataset.armed === '1') {
+        removeItem(Number(btn.dataset.id));
+        showToast('已下架');
+        render();
+        return;
+      }
+      btn.dataset.armed = '1';
+      btn.textContent = '确认下架？';
+      setTimeout(function () {
+        btn.dataset.armed = '0';
+        btn.textContent = '🗑 下架';
+      }, 2000);
+    });
+  });
 }
 
 // 规则引擎：从数据自动生成防丢建议（演示版专家系统）
@@ -418,7 +583,8 @@ function render() {
   if (parts[0] === 'found' || parts[0] === 'lost') renderList(parts[0]);
   else if (parts[0] === 'detail') renderDetail(Number(parts[1]));
   else if (parts[0] === 'publish') renderPublish(parts[1] || 'found');
-  else if (parts[0] === 'dashboard') renderDashboard();
+  else if (parts[0] === 'admin' || parts[0] === 'dashboard') renderAdmin();
+  else if (parts[0] === 'user') renderUserHome();
   else renderHome();
   updateFooter();
   window.scrollTo(0, 0);
@@ -430,14 +596,33 @@ function updateFooter() {
   document.getElementById('stat-waiting').textContent = s.waiting;
 }
 
-// ---------- 首页 ----------
+// ---------- 首页（双入口：普通用户 / 场所管理方） ----------
 function renderHome() {
+  app.innerHTML =
+    '<div class="home-head">'
+    + '<div class="home-title">🎓 ' + esc(SITE_CONFIG.siteName) + '</div>'
+    + '<div class="home-sub">' + esc(SITE_CONFIG.slogan) + '</div>'
+    + '</div>'
+    + '<div class="role-grid">'
+    + '<a class="role-card" href="#/user">'
+    + '<div class="role-emoji">👤</div><div class="role-name">普通用户</div>'
+    + '<div class="role-desc">浏览、搜索、发布、认领失物信息</div></a>'
+    + '<a class="role-card admin" href="#/admin">'
+    + '<div class="role-emoji">🧑‍💼</div><div class="role-name">场所管理方</div>'
+    + '<div class="role-desc">数据看板与信息管理（演示模式）</div></a>'
+    + '</div>'
+    + '<div class="home-tip">不同角色，不同界面：平台同时服务失主与场所运营方</div>';
+}
+
+// 用户首页：两个模块入口 + 最新动态
+function renderUserHome() {
   const items = getItems().slice().sort(byTimeDesc);
   const latest = m => items.filter(it => it.module === m).slice(0, 3);
   const cards = list => list.length ? list.map(itemCard).join('') : emptyHtml('还没有信息，点进模块发布第一条吧');
 
   app.innerHTML =
-    '<div class="home-head">'
+    '<div class="topbar"><a class="back" href="#/">‹</a><h1>普通用户</h1></div>'
+    + '<div class="home-head">'
     + '<div class="home-title">🎓 ' + esc(SITE_CONFIG.siteName) + '</div>'
     + '<div class="home-sub">' + esc(SITE_CONFIG.slogan) + '</div>'
     + '</div>'
@@ -451,7 +636,7 @@ function renderHome() {
     + '</div>'
     + '<div class="section-title">📦 最新捡到</div>' + cards(latest('found'))
     + '<div class="section-title">🔍 最新寻找</div>' + cards(latest('lost'))
-    + '<a class="dash-entry" href="#/dashboard">📊 数据看板 · 管理方视角 →</a>';
+    + '<a class="dash-entry" href="#/admin">🧑‍💼 管理端入口 · 数据看板与信息管理 →</a>';
 }
 
 // ---------- 列表页 ----------
