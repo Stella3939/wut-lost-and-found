@@ -1256,7 +1256,7 @@ function renderPublish(module) {
     + '<input class="form-input" id="f-contact" type="text" placeholder="如：QQ / 手机号" maxlength="40"></div>'
     + '<div class="form-item"><label class="form-label">物品图片（选填，最多 3 张）</label>'
     + '<div class="upload-box" id="upload-box">'
-    + '<div id="upload-hint">📷 点击上传图片</div>'
+    + '<div id="upload-hint">📷 点击上传图片<br><span class="upload-tip">建议选择纯色背景拍摄，AI 识别更准确</span></div>'
     + '<div class="thumbs-row" id="thumbs-row"></div>'
     + '</div>'
     + '<input type="file" id="f-image" accept="image/*" multiple style="display:none">'

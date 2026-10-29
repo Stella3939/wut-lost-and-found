@@ -253,6 +253,7 @@ body {
   color: var(--primary-dark); font-size: 13px; cursor: pointer;
 }
 .upload-box img { max-width: 100%; max-height: 170px; border-radius: 8px; margin-top: 8px; }
+.upload-tip { font-size: 11px; color: var(--muted); }
 .submit-btn { margin-top: 22px; }
 
 /* ---------- 轻提示 Toast ---------- */
