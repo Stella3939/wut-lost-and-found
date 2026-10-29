@@ -362,8 +362,17 @@ function stackHtml(areaCounts, heatStep, m) {
 // 热力色阶对应的十六进制（高德多边形 / Three.js 楼板共用）
 const HEAT_HEX = { hs0: '#EEF2F6', hs1: '#86b6ef', hs2: '#5598e7', hs3: '#2a78d6', hs4: '#1c5cab', hs5: '#104281' };
 
-// 高德真实地图渲染（真实部署需申请免费 Key 并绑定域名白名单）
-function renderAmap(box, areaCounts, heatStep, m, mapPanel) {
+// 高德真实地图渲染：区域导航 + 图层开关 + 热力多边形 + 物品点位（真实部署需申请免费 Key 并绑定域名白名单）
+function renderAmap(mapArea, areaCounts, heatStep, m, mapPanel) {
+  mapArea.innerHTML =
+    '<div class="map-chips" id="map-chips"></div>'
+    + '<div class="map-toggles">'
+    + '<label><input type="checkbox" id="tg-heat" checked> 区域热力</label>'
+    + '<label><input type="checkbox" id="tg-dots" checked> 物品点位</label>'
+    + '</div>'
+    + '<div class="amap-box" id="amap-box"></div>';
+  const box = document.getElementById('amap-box');
+
   if (!m.amapKey || !m.amapJsCode) {
     box.innerHTML = '<div class="empty" style="padding:60px 20px"><div class="empty-emoji">🗺️</div>尚未配置高德地图 Key<br>（在 js/config.js 填入 amapKey 与 amapJsCode 即可显示真实地图）</div>';
     return;
@@ -380,11 +389,17 @@ function renderAmap(box, areaCounts, heatStep, m, mapPanel) {
   };
   document.head.appendChild(s);
 
+  let heatPolys = [];  // 热力多边形 + 远校区标记（受"区域热力"开关控制）
+  let dotMarkers = []; // 物品点位（受"物品点位"开关控制）
+  let map = null;      // 高德地图实例（buildAmap 内创建，供 flyTo 等使用）
+
   function buildAmap() {
-    const map = new window.AMap.Map(box, {
+    map = new window.AMap.Map(box, {
       zoom: m.zoom || 14,
       center: m.center || [114.35, 30.52]
     });
+
+    // 区域热力多边形
     (m.polygons || []).forEach(function (p) {
       const x = areaCounts.find(function (t) { return t.area === p.area; });
       if (!x) return;
@@ -400,7 +415,10 @@ function renderAmap(box, areaCounts, heatStep, m, mapPanel) {
         showAreaPanel(p.area);
         map.setCenter(p.path[0]);
       });
+      heatPolys.push(poly);
     });
+
+    // 远校区标记点
     (m.markers || []).forEach(function (mk) {
       const x = areaCounts.find(function (t) { return t.area === mk.area; });
       if (!x) return;
@@ -410,16 +428,95 @@ function renderAmap(box, areaCounts, heatStep, m, mapPanel) {
         showAreaPanel(mk.area);
         map.setZoomAndCenter(15, mk.lnglat);
       });
+      heatPolys.push(marker);
     });
-    function showAreaPanel(area) {
-      const x = areaCounts.find(function (t) { return t.area === area; });
-      mapPanel.innerHTML = '<div class="map-panel">📍 <b>' + esc(area) + '</b>：等待 '
-        + x.n + ' 件 · 已找到 ' + x.f + ' 件'
-        + ' <button class="map-go" type="button" data-area="' + esc(area) + '">在「捡到东西」中查看 →</button></div>';
-      mapPanel.querySelector('.map-go').addEventListener('click', function () {
-        goAreaList(area);
+
+    // 物品点位层：绿点=捡到，橙点=寻找，点击进详情
+    drawDots();
+    function drawDots() {
+      dotMarkers.forEach(function (o) { o.setMap(null); });
+      dotMarkers = [];
+      getItems().filter(function (it) { return it.status === 'waiting'; }).forEach(function (it) {
+        const c = it.lnglat || jitter(areaCenter(it.campus), it.id);
+        const dot = new window.AMap.CircleMarker({
+          center: c,
+          radius: 7,
+          fillColor: it.module === 'found' ? '#3FA96F' : '#E8933A',
+          fillOpacity: 0.9,
+          strokeColor: '#FFFFFF',
+          strokeWeight: 1.5,
+          zIndex: 100,
+          title: it.name
+        });
+        dot.setMap(map);
+        dot.on('click', function () {
+          location.hash = '#/detail/' + it.id;
+        });
+        dotMarkers.push(dot);
       });
     }
+
+    // 区域导航：点击直接飞过去（解决远校区不在默认视野的问题）
+    const chips = document.getElementById('map-chips');
+    chips.innerHTML = '<span class="map-chip" data-fly="all">🔍 全览</span>'
+      + areaCounts.map(function (x) {
+          return '<span class="map-chip" data-fly="' + esc(x.area) + '">📍 ' + esc(x.area) + '</span>';
+        }).join('');
+    chips.querySelectorAll('.map-chip').forEach(function (c) {
+      c.addEventListener('click', function () { flyTo(c.dataset.fly); });
+    });
+
+    // 图层开关
+    document.getElementById('tg-heat').addEventListener('change', function (e) {
+      heatPolys.forEach(function (o) { o.setMap(e.target.checked ? map : null); });
+    });
+    document.getElementById('tg-dots').addEventListener('change', function (e) {
+      dotMarkers.forEach(function (o) { o.setMap(e.target.checked ? map : null); });
+    });
+  }
+
+  // 区域中心：优先取多边形质心，其次取标记点
+  function areaCenter(area) {
+    const p = (m.polygons || []).find(function (t) { return t.area === area; });
+    if (p) {
+      const xs = p.path.map(function (q) { return q[0]; });
+      const ys = p.path.map(function (q) { return q[1]; });
+      return [
+        (Math.min.apply(null, xs) + Math.max.apply(null, xs)) / 2,
+        (Math.min.apply(null, ys) + Math.max.apply(null, ys)) / 2
+      ];
+    }
+    const mk = (m.markers || []).find(function (t) { return t.area === area; });
+    return mk ? mk.lnglat : (m.center || [114.35, 30.52]);
+  }
+
+  // 无坐标的物品按 id 在区域中心附近散开，避免重叠
+  function jitter(center, id) {
+    const r = 0.004;
+    const a = (id * 137.5) % 360 * Math.PI / 180;
+    const k = (id % 3 + 1) / 3;
+    return [center[0] + Math.cos(a) * r * k, center[1] + Math.sin(a) * r * k];
+  }
+
+  function flyTo(area) {
+    if (!map) return;
+    if (area === 'all') {
+      // 全览：视野装下所有热力图形与点位
+      const overlays = heatPolys.concat(dotMarkers);
+      if (overlays.length) map.setFitView(overlays, false, [60, 60, 60, 60]);
+      return;
+    }
+    map.setZoomAndCenter(15, areaCenter(area));
+  }
+
+  function showAreaPanel(area) {
+    const x = areaCounts.find(function (t) { return t.area === area; });
+    mapPanel.innerHTML = '<div class="map-panel">📍 <b>' + esc(area) + '</b>：等待 '
+      + x.n + ' 件 · 已找到 ' + x.f + ' 件'
+      + ' <button class="map-go" type="button" data-area="' + esc(area) + '">在「捡到东西」中查看 →</button></div>';
+    mapPanel.querySelector('.map-go').addEventListener('click', function () {
+      goAreaList(area);
+    });
   }
 }
 
@@ -666,9 +763,9 @@ function renderAdmin() {
   function drawMap() {
     mapPanel.innerHTML = '';
     if (m.mode === 'amap') {
-      // 真实地图（高德）：异步加载，交互在渲染器内部处理
-      mapArea.innerHTML = '<div class="amap-box" id="amap-box"></div>';
-      renderAmap(document.getElementById('amap-box'), areaCounts, heatStep, m, mapPanel);
+      // 真实地图（高德）：区域导航 + 图层开关 + 热力多边形 + 物品点位
+      mapArea.innerHTML = '';
+      renderAmap(mapArea, areaCounts, heatStep, m, mapPanel);
       return;
     }
     if (m.mode === '3d') {
