@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#4A90D9">
+  <title>失物招领平台</title>
+  <link rel="stylesheet" href="../shared/css/style.css">
+</head>
+<body>
+  <!-- 页面主体，由 shared/js/app.js 按路由渲染 -->
+  <div id="app"></div>
+
+  <!-- 页脚统计：滑到页面底部可见 -->
+  <footer id="footer">
+    <div class="stat">
+      <div class="stat-num" id="stat-found">0</div>
+      <div class="stat-label">🏠 已找到家（件）</div>
+    </div>
+    <div class="stat-divider"></div>
+    <div class="stat">
+      <div class="stat-num" id="stat-waiting">0</div>
+      <div class="stat-label">⏳ 等待主人（件）</div>
+    </div>
+  </footer>
+
+  <script src="js/config.js"></script>
+  <script src="../shared/js/data.js"></script>
+  <script src="../shared/js/store.js"></script>
+  <script src="../shared/js/app.js"></script>
+</body>
+</html>

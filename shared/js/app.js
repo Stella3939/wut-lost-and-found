@@ -359,6 +359,188 @@ function stackHtml(areaCounts, heatStep, m) {
     + '</div><div class="stack-hint">各层热力一目了然 · 点击楼层查看详情</div></div>';
 }
 
+// 热力色阶对应的十六进制（高德多边形 / Three.js 楼板共用）
+const HEAT_HEX = { hs0: '#EEF2F6', hs1: '#86b6ef', hs2: '#5598e7', hs3: '#2a78d6', hs4: '#1c5cab', hs5: '#104281' };
+
+// 高德真实地图渲染（真实部署需申请免费 Key 并绑定域名白名单）
+function renderAmap(box, areaCounts, heatStep, m, mapPanel) {
+  if (!m.amapKey || !m.amapJsCode) {
+    box.innerHTML = '<div class="empty" style="padding:60px 20px"><div class="empty-emoji">🗺️</div>尚未配置高德地图 Key<br>（在 js/config.js 填入 amapKey 与 amapJsCode 即可显示真实地图）</div>';
+    return;
+  }
+  window._AMapSecurityConfig = { securityJsCode: m.amapJsCode };
+  if (window.AMap) { buildAmap(); return; }
+  const s = document.createElement('script');
+  s.src = 'https://webapi.amap.com/maps?v=2.0&key=' + m.amapKey;
+  s.onload = buildAmap;
+  s.onerror = function () {
+    box.innerHTML = '<div class="empty" style="padding:60px 20px">地图加载失败，请检查网络或 Key 配置</div>';
+  };
+  document.head.appendChild(s);
+
+  function buildAmap() {
+    const map = new window.AMap.Map(box, {
+      zoom: m.zoom || 14,
+      center: m.center || [114.35, 30.52]
+    });
+    (m.polygons || []).forEach(function (p) {
+      const x = areaCounts.find(function (t) { return t.area === p.area; });
+      if (!x) return;
+      const poly = new window.AMap.Polygon({
+        path: p.path,
+        fillColor: HEAT_HEX[heatStep(x.n)],
+        fillOpacity: 0.55,
+        strokeColor: '#FFFFFF',
+        strokeWeight: 2
+      });
+      poly.setMap(map);
+      poly.on('click', function () {
+        showAreaPanel(p.area);
+        map.setCenter(p.path[0]);
+      });
+    });
+    (m.markers || []).forEach(function (mk) {
+      const x = areaCounts.find(function (t) { return t.area === mk.area; });
+      if (!x) return;
+      const marker = new window.AMap.Marker({ position: mk.lnglat, title: mk.area });
+      marker.setMap(map);
+      marker.on('click', function () {
+        showAreaPanel(mk.area);
+        map.setZoomAndCenter(15, mk.lnglat);
+      });
+    });
+    function showAreaPanel(area) {
+      const x = areaCounts.find(function (t) { return t.area === area; });
+      mapPanel.innerHTML = '<div class="map-panel">📍 <b>' + esc(area) + '</b>：等待 '
+        + x.n + ' 件 · 已找到 ' + x.f + ' 件'
+        + ' <button class="map-go" type="button" data-area="' + esc(area) + '">在「捡到东西」中查看 →</button></div>';
+      mapPanel.querySelector('.map-go').addEventListener('click', function () {
+        goAreaList(area);
+      });
+    }
+  }
+}
+
+// Three.js 立体楼宇渲染（商场等建筑场景：可旋转缩放、点击楼层看数据）
+let threeState = null; // 保存实例，重复渲染前先清理
+
+function renderThree3d(box, areaCounts, heatStep, m, mapPanel) {
+  if (!window.THREE) {
+    box.innerHTML = '<div class="empty" style="padding:60px 20px">Three.js 加载失败，请刷新重试</div>';
+    return;
+  }
+  const b = m.building || { width: 3.2, depth: 2.2, height: 0.34, gap: 0.12 };
+  const W = b.width, D = b.depth, H = b.height, G = b.gap;
+
+  const scene = new window.THREE.Scene();
+  scene.background = new window.THREE.Color('#F2F7FC');
+  const camera = new window.THREE.PerspectiveCamera(45, (box.clientWidth || 340) / (box.clientHeight || 320), 0.1, 100);
+  camera.position.set(6, 5, 7);
+  camera.lookAt(0, 1.2, 0);
+  const renderer = new window.THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(box.clientWidth || 340, box.clientHeight || 320);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  box.appendChild(renderer.domElement);
+
+  scene.add(new window.THREE.AmbientLight('#ffffff', 0.85));
+  const dir = new window.THREE.DirectionalLight('#ffffff', 1.1);
+  dir.position.set(5, 10, 4);
+  scene.add(dir);
+
+  const group = new window.THREE.Group();
+  scene.add(group);
+
+  // 每层一块楼板，按失物密度着色
+  const floors = [];
+  areaCounts.forEach(function (x, i) {
+    const geo = new window.THREE.BoxGeometry(W, H, D);
+    const mat = new window.THREE.MeshLambertMaterial({
+      color: new window.THREE.Color(HEAT_HEX[heatStep(x.n)]),
+      transparent: true,
+      opacity: 0.92
+    });
+    const mesh = new window.THREE.Mesh(geo, mat);
+    mesh.position.y = i * (H + G) + H / 2;
+    mesh.userData.area = x.area;
+    group.add(mesh);
+    const edges = new window.THREE.LineSegments(
+      new window.THREE.EdgesGeometry(geo),
+      new window.THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.6 })
+    );
+    mesh.add(edges);
+    floors.push(mesh);
+  });
+
+  // 底座
+  const base = new window.THREE.Mesh(
+    new window.THREE.BoxGeometry(W + 0.5, 0.15, D + 0.5),
+    new window.THREE.MeshLambertMaterial({ color: new window.THREE.Color('#CBD9E6') })
+  );
+  base.position.y = -0.12;
+  group.add(base);
+
+  // 交互：拖动旋转 + 滚轮缩放 + 点击选层 + 缓慢自转
+  let theta = 0.6, radius = 9, dragging = false, px = 0, raf = 0;
+  const dom = renderer.domElement;
+  dom.style.cursor = 'grab';
+  dom.addEventListener('pointerdown', function (e) {
+    dragging = true;
+    px = e.clientX;
+    if (dom.setPointerCapture) dom.setPointerCapture(e.pointerId);
+  });
+  dom.addEventListener('pointermove', function (e) {
+    if (!dragging) return;
+    theta -= (e.clientX - px) * 0.012;
+    px = e.clientX;
+  });
+  dom.addEventListener('pointerup', function () { dragging = false; });
+  dom.addEventListener('pointercancel', function () { dragging = false; });
+  dom.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    radius = Math.min(14, Math.max(4, radius + e.deltaY * 0.01));
+  }, { passive: false });
+  dom.addEventListener('click', function (e) {
+    const rect = dom.getBoundingClientRect();
+    const mouse = new window.THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1
+    );
+    const ray = new window.THREE.Raycaster();
+    ray.setFromCamera(mouse, camera);
+    const hit = ray.intersectObjects(floors, false)[0];
+    if (hit) showAreaPanel(hit.object.userData.area);
+  });
+
+  function showAreaPanel(area) {
+    const x = areaCounts.find(function (t) { return t.area === area; });
+    mapPanel.innerHTML = '<div class="map-panel">📍 <b>' + esc(area) + '</b>：等待 '
+      + x.n + ' 件 · 已找到 ' + x.f + ' 件'
+      + ' <button class="map-go" type="button" data-area="' + esc(area) + '">在「捡到东西」中查看 →</button></div>';
+    mapPanel.querySelector('.map-go').addEventListener('click', function () {
+      goAreaList(area);
+    });
+  }
+
+  function animate() {
+    raf = requestAnimationFrame(animate);
+    if (!dragging) theta += 0.003; // 空闲时缓慢自转
+    camera.position.set(radius * Math.sin(theta), 4.6, radius * Math.cos(theta));
+    camera.lookAt(0, 1.2, 0);
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  // 记录实例，页面重新渲染前清理动画与画布
+  if (threeState && threeState.dispose) threeState.dispose();
+  threeState = {
+    dispose: function () {
+      cancelAnimationFrame(raf);
+      renderer.dispose();
+      if (renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
+    }
+  };
+}
+
 // 从管理端地图跳转到对应区域的列表
 function goAreaList(area) {
   listState.module = 'found';
@@ -417,9 +599,11 @@ function renderAdmin() {
     + mapLegendHtml()
     + '<div id="map-area"></div>'
     + '<div id="map-panel"></div>'
-    + '<button class="map-toggle" id="map-toggle" type="button">'
-    + (defaultView === 'flat' ? '🧊 预览立体楼层模式' : '🖼️ 切换平面色块视图')
-    + '</button>'
+    + ((m.mode === 'flat' || m.mode === 'stack')
+      ? '<button class="map-toggle" id="map-toggle" type="button">'
+        + (defaultView === 'flat' ? '🧊 预览立体楼层模式' : '🖼️ 切换平面色块视图')
+        + '</button>'
+      : '')
     + '</div>'
     + '<div class="dash-card"><div class="dash-title">📦 品类分布</div>'
     + catCounts.map(function (x) {
@@ -479,6 +663,18 @@ function renderAdmin() {
 
   function drawMap() {
     mapPanel.innerHTML = '';
+    if (m.mode === 'amap') {
+      // 真实地图（高德）：异步加载，交互在渲染器内部处理
+      mapArea.innerHTML = '<div class="amap-box" id="amap-box"></div>';
+      renderAmap(document.getElementById('amap-box'), areaCounts, heatStep, m, mapPanel);
+      return;
+    }
+    if (m.mode === '3d') {
+      // 立体楼宇（Three.js）：旋转缩放 + 点击楼层
+      mapArea.innerHTML = '<div class="three-box" id="three-box"></div>';
+      renderThree3d(document.getElementById('three-box'), areaCounts, heatStep, m, mapPanel);
+      return;
+    }
     if (mapView === 'stack') {
       mapArea.innerHTML = stackHtml(areaCounts, heatStep, m);
     } else if (m.mode === 'flat' && Object.keys(m.paths || {}).length) {
@@ -506,11 +702,14 @@ function renderAdmin() {
     });
   }
 
-  document.getElementById('map-toggle').addEventListener('click', function () {
-    mapView = mapView === 'stack' ? 'flat' : 'stack';
-    document.getElementById('map-toggle').textContent = mapView === 'stack' ? '🖼️ 切换平面色块视图' : '🧊 预览立体楼层模式';
-    drawMap();
-  });
+  const toggleBtn = document.getElementById('map-toggle');
+  if (toggleBtn && toggleBtn.addEventListener) {
+    toggleBtn.addEventListener('click', function () {
+      mapView = mapView === 'stack' ? 'flat' : 'stack';
+      toggleBtn.textContent = mapView === 'stack' ? '🖼️ 切换平面色块视图' : '🧊 预览立体楼层模式';
+      drawMap();
+    });
+  }
 
   drawMap();
 

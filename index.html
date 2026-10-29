@@ -4,29 +4,41 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="theme-color" content="#4A90D9">
-  <title>失物招领平台</title>
-  <link rel="stylesheet" href="css/style.css">
+  <title>失物招领平台 · 一套系统，多种场景</title>
+  <link rel="stylesheet" href="shared/css/landing.css">
 </head>
 <body>
-  <!-- 页面主体，由 app.js 按路由渲染 -->
-  <div id="app"></div>
+  <div class="land">
+    <header class="land-head">
+      <div class="land-logo">🏠</div>
+      <h1>失物招领平台</h1>
+      <p>一套系统，多种场景——让每一件失物都能找到回家的路</p>
+    </header>
 
-  <!-- 页脚统计：滑到页面底部可见 -->
-  <footer id="footer">
-    <div class="stat">
-      <div class="stat-num" id="stat-found">0</div>
-      <div class="stat-label">🏠 已找到家（件）</div>
-    </div>
-    <div class="stat-divider"></div>
-    <div class="stat">
-      <div class="stat-num" id="stat-waiting">0</div>
-      <div class="stat-label">⏳ 等待主人（件）</div>
-    </div>
-  </footer>
+    <main class="land-grid">
+      <a class="land-card campus" href="campus/">
+        <div class="land-emoji">🎓</div>
+        <h2>校园版</h2>
+        <p>武汉理工大学 · 真实校园地图热力<br>六个校区、五类物品、AI 拍照发布、智能撮合</p>
+        <span class="land-go">进入校园版 →</span>
+      </a>
+      <a class="land-card mall" href="mall/">
+        <div class="land-emoji">🏬</div>
+        <h2>商场版</h2>
+        <p>星光购物中心 · 立体 3D 楼宇<br>逐层热力管理、滞留预警、招领公告</p>
+        <span class="land-go">进入商场版 →</span>
+      </a>
+      <a class="land-card scenic" href="scenic/">
+        <div class="land-emoji">⛰️</div>
+        <h2>景区版</h2>
+        <p>云台山风景区 · 真实地图片区热力<br>游客服务、防丢建议、邮寄认领</p>
+        <span class="land-go">进入景区版 →</span>
+      </a>
+    </main>
 
-  <script src="js/config.js"></script>
-  <script src="js/data.js"></script>
-  <script src="js/store.js"></script>
-  <script src="js/app.js"></script>
+    <footer class="land-foot">
+      课程结课作业 · 数据为演示数据 · 免费部署于 GitHub Pages
+    </footer>
+  </div>
 </body>
 </html>

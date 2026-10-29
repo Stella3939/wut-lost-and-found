@@ -511,6 +511,11 @@ body {
 }
 .map-toggle:active { background: var(--primary-light); }
 
+/* 真实地图（高德）与 3D 楼宇（Three.js）容器 */
+.amap-box { height: 320px; border-radius: 10px; overflow: hidden; }
+.three-box { height: 320px; border-radius: 10px; overflow: hidden; position: relative; background: #F2F7FC; }
+.three-box canvas { display: block; }
+
 /* 2.5D 立体楼层堆叠 */
 .stack-scene { padding: 6px 0 4px; perspective: 1000px; }
 .stack-stage {

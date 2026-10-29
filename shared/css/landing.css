@@ -1,0 +1,51 @@
+/* landing.css —— 总入口页（产品矩阵）样式：淡蓝主题，移动优先 */
+
+:root {
+  --primary: #4A90D9;
+  --primary-dark: #357ABD;
+  --bg: #F2F7FC;
+  --card: #FFFFFF;
+  --text: #2B3A4A;
+  --muted: #7A8BA0;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+body {
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+.land { max-width: 640px; margin: 0 auto; padding: 40px 20px 24px; }
+
+.land-head { text-align: center; margin-bottom: 28px; }
+.land-logo { font-size: 46px; }
+.land-head h1 { font-size: 26px; font-weight: 700; color: var(--primary-dark); margin-top: 6px; }
+.land-head p { font-size: 14px; color: var(--muted); margin-top: 6px; }
+
+.land-grid { display: flex; flex-direction: column; gap: 14px; }
+.land-card {
+  display: block; text-decoration: none;
+  background: var(--card); border-radius: 18px;
+  padding: 22px 20px;
+  box-shadow: 0 2px 12px rgba(74, 144, 217, 0.10);
+  transition: transform 0.15s;
+}
+.land-card:active { transform: scale(0.98); }
+.land-card.campus { background: linear-gradient(160deg, #FFFFFF, #EAF3FC); }
+.land-card.mall { background: linear-gradient(160deg, #FFFFFF, #E7F4FF); }
+.land-card.scenic { background: linear-gradient(160deg, #FFFFFF, #E8F7EF); }
+.land-emoji { font-size: 36px; }
+.land-card h2 { font-size: 19px; font-weight: 700; margin-top: 6px; color: var(--text); }
+.land-card p { font-size: 13px; color: var(--muted); margin-top: 4px; }
+.land-go {
+  display: inline-block; margin-top: 10px;
+  font-size: 13px; font-weight: 600; color: var(--primary);
+  background: rgba(74, 144, 217, 0.10);
+  border-radius: 999px; padding: 5px 14px;
+}
+
+.land-foot { text-align: center; font-size: 12px; color: var(--muted); margin-top: 28px; }

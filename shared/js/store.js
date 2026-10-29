@@ -1,7 +1,10 @@
 // store.js —— 数据读写层：用浏览器 localStorage 模拟后端数据库
 
-const ITEMS_KEY = 'wutlf_items';       // 物品列表
-const COMMENTS_KEY = 'wutlf_comments'; // 评论（按物品 id 分组）
+// 存储键带场景前缀（校园/商场/景区三个站点数据互不干扰）
+const KEY_PREFIX = SITE_CONFIG.storagePrefix || 'wutlf';
+const ITEMS_KEY = KEY_PREFIX + '_items';       // 物品列表
+const COMMENTS_KEY = KEY_PREFIX + '_comments'; // 评论（按物品 id 分组）
+const SEED_VERSION_KEY = KEY_PREFIX + '_seed_version';
 
 // 个别浏览器（隐私模式等）可能禁用 localStorage，此时降级为内存存储（刷新后丢失，不影响演示）
 const storage = (function () {
@@ -20,10 +23,10 @@ const storage = (function () {
 
 // 首次打开（或 config.js 中 seedVersion 变化后）写入预设示例数据
 function initStore() {
-  if (storage.getItem('wutlf_seed_version') !== String(SITE_CONFIG.seedVersion)) {
+  if (storage.getItem(SEED_VERSION_KEY) !== String(SITE_CONFIG.seedVersion)) {
     storage.setItem(ITEMS_KEY, JSON.stringify(SEED_ITEMS));
     storage.setItem(COMMENTS_KEY, JSON.stringify(SEED_COMMENTS));
-    storage.setItem('wutlf_seed_version', String(SITE_CONFIG.seedVersion));
+    storage.setItem(SEED_VERSION_KEY, String(SITE_CONFIG.seedVersion));
   }
 }
 
